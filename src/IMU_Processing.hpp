@@ -157,7 +157,8 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf &kf_state, in
   }
   
   //! 开始懵逼
-  state_ikfom init_state = kf_state.get_x();        //在esekfom.hpp获得x_的状态
+  state_ikfom init_state = kf_state.get_x();        //在esekfom.hpp获得x_的状态  获得初始化的24维状态向量
+  //* mean_acc是当前静止不动时初始化的加速度向量，此时的加速度全部是由于重力引起的，因此使用该向量的方向向量与重力的数值相乘，即可的得到重力加速度向量
   init_state.grav = - mean_acc / mean_acc.norm() * G_m_s2;    //得平均测量的单位方向向量 * 重力加速度预设值
   
   init_state.bg  = mean_gyr;      //角速度测量作为陀螺仪偏差
@@ -166,6 +167,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf &kf_state, in
   kf_state.change_x(init_state);      //将初始化后的状态传入esekfom.hpp中的x_
 
   Matrix<double, 24, 24> init_P = MatrixXd::Identity(24,24);      //在esekfom.hpp获得P_的协方差矩阵
+  //* P是状态量对应的协方差矩阵
   init_P(6,6) = init_P(7,7) = init_P(8,8) = 0.00001;
   init_P(9,9) = init_P(10,10) = init_P(11,11) = 0.00001;
   init_P(15,15) = init_P(16,16) = init_P(17,17) = 0.0001;
@@ -324,11 +326,11 @@ void ImuProcess::Process(const MeasureGroup &meas, esekfom::esekf &kf_state, Poi
 
     if (init_iter_num > MAX_INI_COUNT)
     {
-      cov_acc *= pow(G_m_s2 / mean_acc.norm(), 2);
+      cov_acc *= pow(G_m_s2 / mean_acc.norm(), 2);   //* 对cov_acc乘以一个缩放系数，单初始化理论上来说G_m_s2与mean_acc.norm()的模长相等
       imu_need_init_ = false;
 
-      cov_acc = cov_acc_scale;
-      cov_gyr = cov_gyr_scale;
+      cov_acc = cov_acc_scale;         //? woc 下面直接赋值了，上面那个有什么用
+      cov_gyr = cov_gyr_scale;         //* 角速度协方差
       ROS_INFO("IMU Initial Done");
     }
 

@@ -161,6 +161,7 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     //* 创建一个msg_in消息的副本
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
 
+    //* velodye 默认timediff_lidar_wrt_imu = 0
     if (abs(timediff_lidar_wrt_imu) > 0.1 && time_sync_en)
     {
         msg->header.stamp =
@@ -173,6 +174,7 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 
     mtx_buffer.lock();
 
+    //* 当前帧imu小于上一帧imu 说明数据有问题，清空imu_buff 重新开始
     if (timestamp < last_timestamp_imu)
     {
         ROS_WARN("imu loop back, clear buffer");
@@ -217,6 +219,8 @@ bool sync_packages(MeasureGroup &meas)
         else
         {
             scan_num++;       //* 增加扫描计数器
+            //* meas.lidar->points.back().curvature 因该是对应最后一个点的时间，这个时间是什么时候赋值的，还是一开始就有？
+            //* 答 这个时间在process.cpp365行 默认given_offset_time为false时，通过yaw角与初始角度的差除以角速度获得的相对时间
             lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double(1000);
             //* 更新平均扫描时间（使用增量平均法）
             lidar_mean_scantime += (meas.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;  //注意curvature中存储的是相对第一个点的时间
@@ -239,6 +243,7 @@ bool sync_packages(MeasureGroup &meas)
     while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
     {
         imu_time = imu_buffer.front()->header.stamp.toSec();
+        //* 提前退出循环
         if (imu_time > lidar_end_time)
             break;
         meas.imu.push_back(imu_buffer.front());
