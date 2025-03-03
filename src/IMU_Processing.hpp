@@ -149,12 +149,14 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf &kf_state, in
     mean_acc  += (cur_acc - mean_acc) / N;    //根据当前帧和均值差作为均值的更新
     mean_gyr  += (cur_gyr - mean_gyr) / N;
 
+    //* 协方差递推公式  .cwiseProduct表示执行元素级别的乘积，用于计算向量的平方
     cov_acc = cov_acc * (N - 1.0) / N + (cur_acc - mean_acc).cwiseProduct(cur_acc - mean_acc)  / N;
     cov_gyr = cov_gyr * (N - 1.0) / N + (cur_gyr - mean_gyr).cwiseProduct(cur_gyr - mean_gyr)  / N / N * (N-1);
 
     N ++;
   }
   
+  //! 开始懵逼
   state_ikfom init_state = kf_state.get_x();        //在esekfom.hpp获得x_的状态
   init_state.grav = - mean_acc / mean_acc.norm() * G_m_s2;    //得平均测量的单位方向向量 * 重力加速度预设值
   

@@ -102,6 +102,7 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     mtx_buffer.lock();
     //* 初始scan_count=0
     scan_count++;
+    //* OpenMP库中的一个函数，用于高精度计时 感觉不如自定义一个tic类？
     double preprocess_start_time = omp_get_wtime();
     if (msg->header.stamp.toSec() < last_timestamp_lidar)
     {
@@ -146,7 +147,7 @@ void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg)
 
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
-    lidar_buffer.push_back(ptr);
+    lidar_buffer.push_back(ptr);  //*? 如果提取特征 则传入的是平面点
     time_buffer.push_back(last_timestamp_lidar);
 
     mtx_buffer.unlock();
@@ -157,6 +158,7 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 {
     publish_count++;
     // cout<<"IMU got at: "<<msg_in->header.stamp.toSec()<<endl;
+    //* 创建一个msg_in消息的副本
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
 
     if (abs(timediff_lidar_wrt_imu) > 0.1 && time_sync_en)
@@ -186,7 +188,9 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 
 double lidar_mean_scantime = 0.0;
 int scan_num = 0;
-//把当前要处理的LIDAR和IMU数据打包到meas
+//把当前要处理的LIDAR和IMU数据打包到meas  
+//* 将一帧激光雷达数据与其扫描时间段内的多帧IMU数据同步打包
+//* 主要包含一个点云数据 用来存储雷达点  以及一个imu队列数据 用来存储若干imu 初始化lidar_beg_time时间为0
 bool sync_packages(MeasureGroup &meas)
 {
     if (lidar_buffer.empty() || imu_buffer.empty())
@@ -201,17 +205,20 @@ bool sync_packages(MeasureGroup &meas)
         meas.lidar_beg_time = time_buffer.front();
         if (meas.lidar->points.size() <= 5) // time too little
         {
-            lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
+            lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;    
             ROS_WARN("Too few input point cloud!\n");
         }
+        //* lidar_mean_scantime 表示雷达一帧的平均扫描时间
         else if (meas.lidar->points.back().curvature / double(1000) < 0.5 * lidar_mean_scantime)
         {
             lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
         }
+        //* 正常情况，使用最后一个点的时间戳作为扫描持续时间，并更新平均扫描时间
         else
         {
-            scan_num++;
+            scan_num++;       //* 增加扫描计数器
             lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double(1000);
+            //* 更新平均扫描时间（使用增量平均法）
             lidar_mean_scantime += (meas.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;  //注意curvature中存储的是相对第一个点的时间
         }
 
@@ -220,6 +227,7 @@ bool sync_packages(MeasureGroup &meas)
         lidar_pushed = true;
     }
 
+    //* 最后一帧imu数据时间戳必须晚于激光雷达的扫描结束时间
     if (last_timestamp_imu < lidar_end_time)  //如果最新的imu时间戳都<雷达最终的时间，证明还没有收集足够的imu数据，break
     {
         return false;
@@ -238,6 +246,7 @@ bool sync_packages(MeasureGroup &meas)
     }
 
     lidar_buffer.pop_front();
+    //* time_buffer是在standard_pcl_cbk()函数中一起跟lidar_buffer同时push_back进来的
     time_buffer.pop_front();
     lidar_pushed = false;
     return true;
@@ -590,6 +599,7 @@ int main(int argc, char **argv)
     /*** ROS subscribe initialization ***/
     //* 这里回调收到的雷达数据就已经是ros类型了
     ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
+    //* 把imu数据存入imu_buffer
     ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
     ros::Publisher pubLaserCloudFull = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
     ros::Publisher pubLaserCloudFull_body = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_body", 100000);
@@ -602,8 +612,10 @@ int main(int argc, char **argv)
     downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);
 
     shared_ptr<ImuProcess> p_imu1(new ImuProcess());
+    //* IMU ---> Lidar的外参
     Lidar_T_wrt_IMU << VEC_FROM_ARRAY(extrinT);
     Lidar_R_wrt_IMU << MAT_FROM_ARRAY(extrinR);
+    //* 设置外参矩阵，角速度和加速度协方差 角速度和加速度零偏
     p_imu1->set_param(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU, V3D(gyr_cov, gyr_cov, gyr_cov), V3D(acc_cov, acc_cov, acc_cov),
                       V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov), V3D(b_acc_cov, b_acc_cov, b_acc_cov));
 

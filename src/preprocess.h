@@ -50,8 +50,8 @@ enum E_jump
 
 struct orgtype
 {
-  double range;
-  double dista;
+  double range;         //* range是当前点到雷达原点的距离
+  double dista;         //* dista是当前点与下一个点的距离的平方
   double angle[2];
   double intersect;
   E_jump edj[2];
