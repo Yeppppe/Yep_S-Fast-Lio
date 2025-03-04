@@ -37,7 +37,7 @@ namespace esekfom
 	{
 	public:
 		typedef Matrix<double, 24, 24> cov;				// 24X24的协方差矩阵
-		typedef Matrix<double, 24, 1> vectorized_state; // 24X1的向量
+		typedef Matrix<double, 24, 1> vectorized_state; // 24X1的向量 
 
 		esekf(){};
 		~esekf(){};
@@ -80,8 +80,8 @@ namespace esekfom
 			return x_r;
 		}
 
-		//前向传播  公式(4-8)
-		void predict(double &dt, Eigen::Matrix<double, 12, 12> &Q, const input_ikfom &i_in)
+		//前向传播  公式(4-8)  会更新状态量x_以及协方差矩阵P_
+		void  predict(double &dt, Eigen::Matrix<double, 12, 12> &Q, const input_ikfom &i_in)
 		{
 			Eigen::Matrix<double, 24, 1> f_ = get_f(x_, i_in);	  //公式(3)的f
 			Eigen::Matrix<double, 24, 24> f_x_ = df_dx(x_, i_in); //公式(7)的df/dx
@@ -89,7 +89,7 @@ namespace esekfom
 
 			x_ = boxplus(x_, f_ * dt); //前向传播 公式(4)
 
-			f_x_ = Matrix<double, 24, 24>::Identity() + f_x_ * dt; //之前Fx矩阵里的项没加单位阵，没乘dt   这里补上
+			  = Matrix<double, 24, 24>::Identity() + f_x_ * dt; //之前Fx矩阵里的项没加单位阵，没乘dt   这里补上
 
 			P_ = (f_x_)*P_ * (f_x_).transpose() + (dt * f_w_) * Q * (dt * f_w_).transpose(); //传播协方差矩阵，即公式(8)
 		}
@@ -297,8 +297,8 @@ namespace esekfom
 		}
 
 	private:
-		state_ikfom x_;
-		cov P_ = cov::Identity();
+		state_ikfom x_;     //* 结构体定义的24维状态量
+		cov P_ = cov::Identity();    //* 状态量协方差矩阵，初始化为单位阵
 	};
 
 } // namespace esekfom

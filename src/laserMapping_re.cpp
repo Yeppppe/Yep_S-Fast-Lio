@@ -83,7 +83,7 @@ M3D Lidar_R_wrt_IMU(Eye3d);
 /*** EKF inputs and output ***/
 MeasureGroup Measures;
 
-esekfom::esekf kf;
+esekfom::esekf kf;    //* 存储着待优化的状态量和协方差矩阵
 
 state_ikfom state_point;
 Eigen::Vector3d pos_lid; //估计的W系下的位置

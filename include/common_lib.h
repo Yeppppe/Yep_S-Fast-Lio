@@ -63,6 +63,7 @@ auto set_pose6d(const double t, const Matrix<T, 3, 1> &a, const Matrix<T, 3, 1> 
         rot_kp.pos[i] = p(i);
         for (int j = 0; j < 3; j++)  rot_kp.rot[i*3+j] = R(i,j);
     }
+    //* 使用移动语义 直接窃取rot_kp对象的资源进行返回，而不是简单的复制对象
     return move(rot_kp);
 }
 
