@@ -33,14 +33,14 @@ struct state_ikfom
 struct input_ikfom
 {
 	Eigen::Vector3d acc = Eigen::Vector3d(0,0,0);         //* 加速度
-	Eigen::Vector3d gyro = Eigen::Vector3d(0,0,0);		  //* 加速度
+	Eigen::Vector3d gyro = Eigen::Vector3d(0,0,0);		  //* 角速度
 };
 
 
 //噪声协方差Q的初始化(对应公式(8)的Q, 在IMU_Processing.hpp中使用)
 Eigen::Matrix<double, 12, 12> process_noise_cov()
 {
-	Eigen::Matrix<double, 12, 12> Q = Eigen::MatrixXd::Zero(12, 12);
+	Eigen::Matrix<double, 12, 12> Q = Eigen::MatrixXd::Zero(12, 12);  
 	Q.block<3, 3>(0, 0) = 0.0001 * Eigen::Matrix3d::Identity();
 	Q.block<3, 3>(3, 3) = 0.0001 * Eigen::Matrix3d::Identity();
 	Q.block<3, 3>(6, 6) = 0.00001 * Eigen::Matrix3d::Identity();
@@ -63,7 +63,6 @@ Eigen::Matrix<double, 24, 1> get_f(state_ikfom s, input_ikfom in)
 		res(i + 3) = omega[i];	//角速度（对应公式第1行）
 		res(i + 12) = a_inertial[i] + s.grav[i];		//加速度（对应公式第3行）
 	}
-
 	return res;
 }
 

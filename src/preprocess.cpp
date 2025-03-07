@@ -59,6 +59,7 @@ void Preprocess::process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointClo
   case MS:
     time_unit_scale = 1.f;
     break;
+  //*  1.e-3f = 0.001 千分之一
   case US:
     time_unit_scale = 1.e-3f;
     break;
@@ -304,7 +305,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
   pl_surf.reserve(plsize);
 
   /*** These variables only works when no point timestamps given ***/
-  double omega_l = 0.361 * SCAN_RATE; // scan angular velocity  SCAN_RATE = 10 单位是度/ms
+  double omega_l = 0.361 * SCAN_RATE; //* scan angular velocity  SCAN_RATE = 10 单位是度/ms 相当于每秒钟转3600度
   std::vector<bool> is_first(N_SCANS, true);
   std::vector<double> yaw_fp(N_SCANS, 0.0);   // yaw of first scan point
   std::vector<float> yaw_last(N_SCANS, 0.0);  // yaw of last scan point
@@ -317,12 +318,13 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
   {
     given_offset_time = true;
   }
+  //*  计算一圈扫描点的初始角度和结束角度 同时设置 given_offset_time = false
   else
   {
     given_offset_time = false;
     double yaw_first = atan2(pl_orig.points[0].y, pl_orig.points[0].x) * 57.29578;   //* 计算第一个点的偏航角，* 57.29578表示将弧度转换为角度
-    double yaw_end = yaw_first;
-    //* 获取第一个点所在的扫描线
+    double yaw_end = yaw_first; 
+    //* 获取第一个点所在的扫描线    这个ring是一开始就有的吗？
     int layer_first = pl_orig.points[0].ring;
     for (uint i = plsize - 1; i > 0; i--)
     {
@@ -345,6 +347,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
       pl_buff[i].reserve(plsize);
     }
 
+    //* 这个for循环已经遍历一遍点，添加了时间戳以及x , y , z信息到pl_buff[layer]中
     for (int i = 0; i < plsize; i++)
     {
       PointType added_pt;
@@ -359,12 +362,13 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
       added_pt.y = pl_orig.points[i].y;
       added_pt.z = pl_orig.points[i].z;
       added_pt.intensity = pl_orig.points[i].intensity;
-      added_pt.curvature = pl_orig.points[i].time * time_unit_scale; // units: MS
+      added_pt.curvature = pl_orig.points[i].time * time_unit_scale; //* 现在为止所有的点的时间可能都是ros时间戳赋予的时间，即一帧所有点的时间戳均相同 并转换成秒，不过无所谓，下面你就立刻变为0了
 
-      //* 每一层的第一个点时间戳为0 后续会随着转动的角度逐渐增加
+      //* 开始计算每个点的时间戳
       if (!given_offset_time)
       {
         double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
+        //* 将每层第一个点的时间戳记为0 
         if (is_first[layer])
         {
           // printf("layer: %d; is first: %d", layer, is_first[layer]);
@@ -376,15 +380,12 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
           time_last[layer] = added_pt.curvature;
           continue;
         }
-        //* 表示在同一层内
+        //? 计算的是补角?
         if (yaw_angle <= yaw_fp[layer])
         {
           //* omega_l是雷达旋转的角速度 单位是度/ms意思是 转换过来就是1秒钟转3610度，也就是每秒10圈
-          //* 角度差除以角速度为时间 从0时刻喀什转到当前点的时间
           added_pt.curvature = (yaw_fp[layer] - yaw_angle) / omega_l;
         }
-        //* 度数小于该圈第一个点的度数，则需要补上360度
-        //* 可能只是为了保险起见
         else
         {
           added_pt.curvature = (yaw_fp[layer] - yaw_angle + 360.0) / omega_l;
@@ -418,6 +419,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
       types.clear();
       types.resize(linesize);
       linesize--;
+      //* 填补types特征 range和dista 这个range是水平面上投影距离，不包括z轴
       for (uint i = 0; i < linesize; i++)
       {
         //* 计算扫描点的距离 以及相邻点的距离
@@ -455,7 +457,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
       // std::cout << "added_pt.curvature:" << added_pt.curvature << std::endl;
 
 
-      if (!given_offset_time)
+      if (!given_offset_time)  //* 给一帧点赋予时间戳
       {
         int layer = pl_orig.points[i].ring;
         double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
@@ -544,7 +546,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
     //* 判断从i->i_nex是否可能构成一个平面  plane_type = 2不为平面点
     plane_type = plane_judge(pl, types, i, i_nex, curr_direct);
 
-    //* 当前点为平面点
+    //* 当前点为平面点 盘点i--->i_nex的点的类型 ：Real_Plane  Poss_Plane   Edge_Plane
     if (plane_type == 1)
     {
       //* plane_judge如果判断为平面点，则从i->i_nex为细长平面
@@ -582,7 +584,8 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
       i = i_nex - 1;
       last_state = 1;
     }
-    else // if(plane_type == 2)
+    //* if(plane_type == 2) 下次遍历从i_nex开始
+    else 
     {
       i = i_nex;          //* 对于非平面直接跳到扩展的终点
       last_state = 0;     //* 标记为非平面状态
@@ -655,6 +658,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
     //   Wire,
     //   ZeroPoint
     // };
+    //* 只处理 Nor Poss_Plane Real_Plane
     if (types[i].range < blind || types[i].ftype >= Real_Plane)
     {
       continue;
@@ -761,7 +765,8 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
 
   plsize2 = plsize - 1;
   double ratio;
-  for (uint i = head + 1; i < plsize2; i++)
+  
+  for (uint i = head + 1; i < plsize2; i++)   //* 剩余Nor 不是特别密集的都变为平面点了
   {
     //* 跳过盲区点
     if (types[i].range < blind || types[i - 1].range < blind || types[i + 1].range < blind)
@@ -807,7 +812,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
   int last_surface = -1;
   for (uint j = head; j < plsize; j++)
   {
-    //* 对于可能是平面点
+    //* 对于可能是平面点 进行降采样处理
     if (types[j].ftype == Poss_Plane || types[j].ftype == Real_Plane)
     {
       if (last_surface == -1)
@@ -829,7 +834,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
         last_surface = -1;
       }
     }
-    //* 处理非平面点
+    //* 处理非平面点 保存边缘点----> pl_corn  同时压缩一系列非平面点非角点的点 进入pl_surf
     else
     {
       //* 保存边缘点----> pl_corn

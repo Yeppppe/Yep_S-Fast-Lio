@@ -585,6 +585,7 @@ int main(int argc, char **argv)
         {
             double t00 = omp_get_wtime();
 
+            //* 判断是否为第一帧 如果是拿出第一帧时间
             if (flg_first_scan)
             {
                 first_lidar_time = Measures.lidar_beg_time;

@@ -111,7 +111,7 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     }
 
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr);
+    p_pre->process(msg, ptr);   //* msg处理后---> ptr中
     lidar_buffer.push_back(ptr);
     time_buffer.push_back(msg->header.stamp.toSec());
     last_timestamp_lidar = msg->header.stamp.toSec();
@@ -164,8 +164,7 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     //* velodye 默认timediff_lidar_wrt_imu = 0
     if (abs(timediff_lidar_wrt_imu) > 0.1 && time_sync_en)
     {
-        msg->header.stamp =
-            ros::Time().fromSec(timediff_lidar_wrt_imu + msg_in->header.stamp.toSec());
+        msg->header.stamp = ros::Time().fromSec(timediff_lidar_wrt_imu + msg_in->header.stamp.toSec());
     }
 
     msg->header.stamp = ros::Time().fromSec(msg_in->header.stamp.toSec() - time_diff_lidar_to_imu);
@@ -645,6 +644,7 @@ int main(int argc, char **argv)
                 continue;
             }
 
+            //* 虽然process中最后一行进行了去畸变 但是因为初始化最大迭代次数设置为10因此，在经历十次打包数据以后才会正式进行运动即便计算，返回的feats_undistort才不为空，所以才会能跳过下面的if判断继续执行
             p_imu1->Process(Measures, kf, feats_undistort);
 
             //如果feats_undistort为空 ROS_WARN
@@ -653,7 +653,7 @@ int main(int argc, char **argv)
                 ROS_WARN("No point, skip this scan!\n");
                 continue;
             }
-
+            
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot.matrix() * state_point.offset_T_L_I;
 

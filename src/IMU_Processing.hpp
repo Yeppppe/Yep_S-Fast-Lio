@@ -141,7 +141,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf &kf_state, in
     first_lidar_time = meas.lidar_beg_time;                   //将当前IMU帧对应的lidar起始时间 作为初始时间
   }
 
-  //* 根据所有imu的数据计算一个平均值和方差
+  //* 根据所有imu的数据计算一个平均值和协方差
   for (const auto &imu : meas.imu) 
   {
     const auto &imu_acc = imu->linear_acceleration;
@@ -152,7 +152,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf &kf_state, in
     mean_acc  += (cur_acc - mean_acc) / N;    //根据当前帧和均值差作为均值的更新
     mean_gyr  += (cur_gyr - mean_gyr) / N;
 
-    //* 协方差递推公式  .cwiseProduct表示执行元素级别的乘积，用于计算向量的平方
+    //* 噪声协方差矩阵，初始化迭代赋值  .cwiseProduct表示执行元素级别的乘积，用于计算向量的平方
     cov_acc = cov_acc * (N - 1.0) / N + (cur_acc - mean_acc).cwiseProduct(cur_acc - mean_acc)  / N;
     cov_gyr = cov_gyr * (N - 1.0) / N + (cur_gyr - mean_gyr).cwiseProduct(cur_gyr - mean_gyr)  / N / N * (N-1);
 
@@ -171,11 +171,11 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf &kf_state, in
 
   Matrix<double, 24, 24> init_P = MatrixXd::Identity(24,24);      //在esekfom.hpp获得P_的协方差矩阵
   //* P是状态量对应的协方差矩阵
-  init_P(6,6) = init_P(7,7) = init_P(8,8) = 0.00001;
-  init_P(9,9) = init_P(10,10) = init_P(11,11) = 0.00001;
-  init_P(15,15) = init_P(16,16) = init_P(17,17) = 0.0001;
-  init_P(18,18) = init_P(19,19) = init_P(20,20) = 0.001;
-  init_P(21,21) = init_P(22,22) = init_P(23,23) = 0.00001; 
+  init_P(6,6) = init_P(7,7) = init_P(8,8) = 0.00001;            //* 旋转外参
+  init_P(9,9) = init_P(10,10) = init_P(11,11) = 0.00001;        //* 平移外参
+  init_P(15,15) = init_P(16,16) = init_P(17,17) = 0.0001;       //* 角速度偏置 bw
+  init_P(18,18) = init_P(19,19) = init_P(20,20) = 0.001;        //* 加速度偏置
+  init_P(21,21) = init_P(22,22) = init_P(23,23) = 0.00001;      //* 重力加速度
   kf_state.change_P(init_P);
   last_imu_ = meas.imu.back();
 
@@ -197,8 +197,11 @@ void ImuProcess:: UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_stat
   sort(pcl_out.points.begin(), pcl_out.points.end(), time_list);  //这里curvature中存放了时间戳（在preprocess.cpp中）
 
 
+  //? 这里为什么不可能是前面前向传播出来的估计值？
   state_ikfom imu_state = kf_state.get_x();  // 获取上一次KF估计的后验状态作为本次IMU预测的初始状态
+  //* vector<Pose6D> IMUpose; 
   IMUpose.clear();
+  //! set_pose6d()使用了移动语义，可以认为是new出来一个pose 然后 push_back进入这个IMUpose当中
   IMUpose.push_back(set_pose6d(0.0, acc_s_last, angvel_last, imu_state.vel, imu_state.pos, imu_state.rot.matrix()));
   //将初始状态加入IMUpose中,包含有时间间隔，上一帧加速度，上一帧角速度，上一帧速度，上一帧位置，上一帧旋转矩阵
 
@@ -241,11 +244,13 @@ void ImuProcess:: UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_stat
     in.acc = acc_avr;     // 两帧IMU的中值作为输入in  用于前向传播
     in.gyro = angvel_avr;
     //* 协方差在初始化的时候就已经赋值好了
+    //* Q是对应的12*12的协方差矩阵
     Q.block<3, 3>(0, 0).diagonal() = cov_gyr;         // 配置协方差矩阵
     Q.block<3, 3>(3, 3).diagonal() = cov_acc;
     Q.block<3, 3>(6, 6).diagonal() = cov_bias_gyr;
     Q.block<3, 3>(9, 9).diagonal() = cov_bias_acc;
 
+    //* 前向传播 同时传播状态向量x_ 以及协方差矩阵P_
     kf_state.predict(dt, Q, in);    // IMU前向传播，每次传播的时间间隔为dt
 
     imu_state = kf_state.get_x();   //更新IMU状态为积分后的状态
@@ -291,8 +296,10 @@ void ImuProcess:: UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_stat
     angvel_avr<<VEC_FROM_ARRAY(tail->gyr);  //拿到后一帧的IMU角速度
 
     //之前点云按照时间从小到大排序过，IMUpose也同样是按照时间从小到大push进入的
-    //此时从IMUpose的末尾开始循环，也就是从时间最大处开始，因此只需要判断 点云时间需>IMU head时刻  即可   不需要判断 点云时间<IMU tail
-    for(; it_pcl->curvature / double(1000) > head->offset_time;   --)
+    //此时从IMUpose的末尾开始循环，也就是从时间最大处开始，因此只需要判断 点云时间需>IMU head时刻  即可   不需要判断 点云时间<IMU tail   最后一个imu是在点云end之后的一个？
+    //* offset_time是当前imu距离这帧雷达开始的时间间隔
+    //*                                        * i * * * * i * * * * |
+    for(; it_pcl->curvature / double(1000) > head->offset_time; it_pcl --)
     {
       dt = it_pcl->curvature / double(1000) - head->offset_time;    //点到IMU开始时刻的时间间隔 
 
@@ -302,6 +309,9 @@ void ImuProcess:: UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_stat
       
       V3D P_i(it_pcl->x, it_pcl->y, it_pcl->z);   //点所在时刻的位置(雷达坐标系下)
       V3D T_ei(pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt - imu_state.pos);   //从点所在的世界位置-雷达末尾世界位置
+      //?  有个问题 就是这个点不是本来就在lidar坐标系下的嘛
+      //! offset_R_L_I 代表的应该是从Lidar  -- > IMU坐标系的意思 和我们平时公式的定义不同
+      //todo 关于坐标系变换，不同极坐标系下的坐标变换 要好好搞一下
       V3D P_compensate = imu_state.offset_R_L_I.matrix().transpose() * (imu_state.rot.matrix().transpose() * (R_i * (imu_state.offset_R_L_I.matrix() * P_i + imu_state.offset_T_L_I) + T_ei) - imu_state.offset_T_L_I);
 
       it_pcl->x = P_compensate(0);
