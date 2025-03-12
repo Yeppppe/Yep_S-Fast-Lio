@@ -29,8 +29,8 @@ namespace esekfom
 	{
 		bool valid;												   //有效特征点数量是否满足要求
 		bool converge;											   //迭代时，是否已经收敛
-		Eigen::Matrix<double, Eigen::Dynamic, 1> h;				   //残差	(公式(14)中的z)
-		Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> h_x; //雅可比矩阵H (公式(14)中的H)
+		Eigen::Matrix<double, Eigen::Dynamic, 1> h;				   //残差	(公式(14)中的z)  z为观测 即 m*1的矩阵 m为特征点数量
+		Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> h_x; //雅可比矩阵H (公式(14)中的H)    观测相对于误差量x的雅可比矩阵
 	};
 
 	class esekf
@@ -99,9 +99,10 @@ namespace esekfom
 						   KD_TREE<PointType> &ikdtree, vector<PointVector> &Nearest_Points, bool extrinsic_est)
 		{
 			int feats_down_size = feats_down_body->points.size();
-			laserCloudOri->clear();
-			corr_normvect->clear();
+			laserCloudOri->clear();     //* laserCloudOri存储有效点
+			corr_normvect->clear();		//* 用来存储法向量
 
+//* 查询临近点 开启多线程
 #ifdef MP_EN
 			omp_set_num_threads(MP_PROC_NUM);
 #pragma omp parallel for
@@ -120,13 +121,13 @@ namespace esekfom
 				point_world.z = p_global(2);
 				point_world.intensity = point_body.intensity;
 
-				vector<float> pointSearchSqDis(NUM_MATCH_POINTS);
+				vector<float> pointSearchSqDis(NUM_MATCH_POINTS); 
 				auto &points_near = Nearest_Points[i]; // Nearest_Points[i]打印出来发现是按照离point_world距离，从小到大的顺序的vector
 
 				double ta = omp_get_wtime();
 				if (ekfom_data.converge)
 				{
-					//寻找point_world的最近邻的平面点
+					//* 寻找point_world的最近邻的平面点    point_world要搜索的近邻点，NUM_MATCH_POINTS要搜索的数量，points_near将搜索到的近邻点存储在这里  pointSearchSqDis：每个近邻点的距离值
 					ikdtree.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis);
 					//判断是否是有效匹配点，与loam系列类似，要求特征点最近邻的地图点数量>阈值，距离<阈值  满足条件的才置为true
 					point_selected_surf[i] = points_near.size() < NUM_MATCH_POINTS ? false : pointSearchSqDis[NUM_MATCH_POINTS - 1] > 5 ? false
@@ -135,17 +136,21 @@ namespace esekfom
 				if (!point_selected_surf[i])
 					continue; //如果该点不满足条件  不进行下面步骤
 
-				Matrix<float, 4, 1> pabcd;		//平面点信息
+				Matrix<float, 4, 1> pabcd;		//平面点信息 
 				point_selected_surf[i] = false; //将该点设置为无效点，用来判断是否满足条件
 				//拟合平面方程ax+by+cz+d=0并求解点到平面距离
 				if (esti_plane(pabcd, points_near, 0.1f))
 				{
+					//* pd2计算的是当前点到拟合平面的距离
 					float pd2 = pabcd(0) * point_world.x + pabcd(1) * point_world.y + pabcd(2) * point_world.z + pabcd(3); //当前点到平面的距离
+					//* p_body为当前点的range即到雷达原点的距离 所以range约大容忍程度越大
 					float s = 1 - 0.9 * fabs(pd2) / sqrt(p_body.norm());												   //如果残差大于经验阈值，则认为该点是有效点  简言之，距离原点越近的lidar点  要求点到平面的距离越苛刻
 
 					if (s > 0.9) //如果残差大于阈值，则认为该点是有效点
 					{
+						//* 有效点设置为true
 						point_selected_surf[i] = true;
+						//* 存储平面法向量以及 点到拟合平面的距离
 						normvec->points[i].x = pabcd(0); //存储平面的单位法向量  以及当前点到平面距离
 						normvec->points[i].y = pabcd(1);
 						normvec->points[i].z = pabcd(2);
@@ -165,6 +170,7 @@ namespace esekfom
 				}
 			}
 
+			//* 点特征数比较少的话，valid就会编程false
 			if (effct_feat_num < 1)
 			{
 				ekfom_data.valid = false;
@@ -173,8 +179,8 @@ namespace esekfom
 			}
 
 			// 雅可比矩阵H和残差向量的计算
-			ekfom_data.h_x = MatrixXd::Zero(effct_feat_num, 12);
-			ekfom_data.h.resize(effct_feat_num);
+			ekfom_data.h_x = MatrixXd::Zero(effct_feat_num, 12);   //* m x 12的矩阵
+			ekfom_data.h.resize(effct_feat_num);   //* 残差是 h*1 的矩阵
 
 			for (int i = 0; i < effct_feat_num; i++)
 			{
@@ -183,14 +189,14 @@ namespace esekfom
 				point_crossmat << SKEW_SYM_MATRX(point_);
 				V3D point_I_ = x_.offset_R_L_I * point_ + x_.offset_T_L_I;
 				M3D point_I_crossmat;
-				point_I_crossmat << SKEW_SYM_MATRX(point_I_);
+				point_I_crossmat << SKEW_SYM_MATRX(point_I_);   //* 把点变换到imu坐标系下同时变换为反对称矩阵
 
 				// 得到对应的平面的法向量
 				const PointType &norm_p = corr_normvect->points[i];
 				V3D norm_vec(norm_p.x, norm_p.y, norm_p.z);
 
 				// 计算雅可比矩阵H
-				V3D C(x_.rot.matrix().transpose() * norm_vec);
+				V3D C(x_.rot.matrix().transpose() * norm_vec);  //* C =  R逆 * 法向量
 				V3D A(point_I_crossmat * C);
 				if (extrinsic_est)
 				{
@@ -199,11 +205,13 @@ namespace esekfom
 				}
 				else
 				{
+					//* 该处推导见文档12的公式13
 					ekfom_data.h_x.block<1, 12>(i, 0) << norm_p.x, norm_p.y, norm_p.z, VEC_FROM_ARRAY(A), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
 				}
 
 				//残差：点面距离
 				ekfom_data.h(i) = -norm_p.intensity;
+				//* 计算的残差和雅可比矩阵会存储在ekfom_data结构中
 			}
 		}
 
@@ -227,46 +235,55 @@ namespace esekfom
 		}
 
 		// ESKF
+		//*  bool extrinsic_est表示是否估计外参
 		void update_iterated_dyn_share_modified(double R, PointCloudXYZI::Ptr &feats_down_body,
 												KD_TREE<PointType> &ikdtree, vector<PointVector> &Nearest_Points, int maximum_iter, bool extrinsic_est)
 		{
+			//* normvec存储平面法向量以及当前点到平面
 			normvec->resize(int(feats_down_body->points.size()));
 
 			dyn_share_datastruct dyn_share;
-			dyn_share.valid = true;
+			dyn_share.valid = true;        
 			dyn_share.converge = true;
-			int t = 0;
+			int t = 0;      //* 迭代次数
 			state_ikfom x_propagated = x_; //这里的x_和P_分别是经过正向传播后的状态量和协方差矩阵，因为会先调用predict函数再调用这个函数
 			cov P_propagated = P_;
 
+			//* dx_new 用来存储公式（18）广义加的后半部分，用来存储更新量
 			vectorized_state dx_new = vectorized_state::Zero(); // 24X1的向量
 
 			for (int i = -1; i < maximum_iter; i++) // maximum_iter是卡尔曼滤波的最大迭代次数
 			{
 				dyn_share.valid = true;
 				// 计算雅克比，也就是点面残差的导数 H(代码里是h_x)
+				//* h_share_model函数计算的残差h和雅可比矩阵h_x 通过dyn_share 输出
 				h_share_model(dyn_share, feats_down_body, ikdtree, Nearest_Points, extrinsic_est);
 
+				//* 有效点<1 dyn_share.valid会变成false
 				if (!dyn_share.valid)
 				{
 					continue;
 				}
 
+				//* dx 是更新量
 				vectorized_state dx;
+				//*  论文公式18 的后半部分，原来第一次前向传播出来的xk的值是始终不变的，x_在不断迭代更新
 				dx_new = boxminus(x_, x_propagated); //公式(18)中的 x^k - x^
 
 				//由于H矩阵是稀疏的，只有前12列有非零元素，后12列是零 因此这里采用分块矩阵的形式计算 减少计算量
 				auto H = dyn_share.h_x;												// m X 12 的矩阵
 				Eigen::Matrix<double, 24, 24> HTH = Matrix<double, 24, 24>::Zero(); //矩阵 H^T * H
+				//* 为论文中的公式(20)做准备，由于公式中的R的对角元素值都相同，因此可以看作一个常数
 				HTH.block<12, 12>(0, 0) = H.transpose() * H;
 
-				auto K_front = (HTH / R + P_.inverse()).inverse();
+				auto K_front = (HTH / R + P_.inverse()).inverse(); 
 				Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> K;
 				K = K_front.block<24, 12>(0, 0) * H.transpose() / R; //卡尔曼增益  这里R视为常数
 
 				Eigen::Matrix<double, 24, 24> KH = Matrix<double, 24, 24>::Zero(); //矩阵 K * H
+				//? KH 后面迭代更新会用到
 				KH.block<24, 12>(0, 0) = K * H;
-				Matrix<double, 24, 1> dx_ = K * dyn_share.h + (KH - Matrix<double, 24, 24>::Identity()) * dx_new; //公式(18)
+				Matrix<double, 24, 1> dx_ = K * dyn_share.h + (KH - Matrix<double, 24, 24>::Identity()) * dx_new; //公式(18) J矩阵接近单位阵 因此就忽略掉了
 				// std::cout << "dx_: " << dx_.transpose() << std::endl;
 				x_ = boxplus(x_, dx_); //公式(18)
 
@@ -283,13 +300,16 @@ namespace esekfom
 				if (dyn_share.converge)
 					t++;
 
-				if (!t && i == maximum_iter - 2) //如果迭代了3次还没收敛 强制令成true，h_share_model函数中会重新寻找近邻点
+				if (!t  && i== maximum_iter - 2) //如果迭代了3次还没收敛 强制令成true，h_share_model函数中会重新寻找近邻点
 				{
 					dyn_share.converge = true;
 				}
 
+				//! 当t == 2的时候岂不是就会开始计算协方差矩阵了？ 
+				//* 对的 我的理解是 至少会更新两次协方差矩阵，每隔一次迭代更新一次
 				if (t > 1 || i == maximum_iter - 1)
 				{
+					//* 迭代结束更新协方差矩阵
 					P_ = (Matrix<double, 24, 24>::Identity() - KH) * P_; //公式(19)
 					return;
 				}

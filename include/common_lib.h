@@ -90,6 +90,7 @@ bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &
         A(j,2) = point[j].z;
     }
 
+    //* QR分解 求平面方程系数
     Matrix<T, 3, 1> normvec = A.colPivHouseholderQr().solve(b);
 
     T n = normvec.norm();
@@ -100,6 +101,7 @@ bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &
     pca_result(3) = 1.0 / n;
 
     //如果几个点中有距离该平面>threshold的点 认为是不好的平面 返回false
+    //* 带回求得的平面方程，判断点是否较好的在平面上，如果都很接近平面，即距离平面小于阈值，则认为可以拟合为平面，阈值设置为0.1m
     for (int j = 0; j < NUM_MATCH_POINTS; j++)
     {
         if (fabs(pca_result(0) * point[j].x + pca_result(1) * point[j].y + pca_result(2) * point[j].z + pca_result(3)) > threshold)

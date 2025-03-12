@@ -645,6 +645,7 @@ int main(int argc, char **argv)
             }
 
             //* 虽然process中最后一行进行了去畸变 但是因为初始化最大迭代次数设置为10因此，在经历十次打包数据以后才会正式进行运动即便计算，返回的feats_undistort才不为空，所以才会能跳过下面的if判断继续执行
+            //* kf为更新后的状态量   feats_undistort为更新后的点云
             p_imu1->Process(Measures, kf, feats_undistort);
 
             //如果feats_undistort为空 ROS_WARN
@@ -655,6 +656,7 @@ int main(int argc, char **argv)
             }
             
             state_point = kf.get_x();
+            //* 获取当前雷达原点在世界坐标系下的位置
             pos_lid = state_point.pos + state_point.rot.matrix() * state_point.offset_T_L_I;
 
             flg_EKF_inited = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? false : true;
@@ -671,7 +673,7 @@ int main(int argc, char **argv)
             {
                 ROS_WARN("No point, skip this scan!\n");
                 continue;
-            }
+            } 
 
             //初始化ikdtree(ikdtree为空时)
             if (ikdtree.Root_Node == nullptr)
@@ -686,6 +688,7 @@ int main(int argc, char **argv)
                 continue;
             }
 
+            //* 是否查看全局地图
             if (0) // If you need to see map point, change to "if(1)"
             {
                 PointVector().swap(ikdtree.PCL_Storage);
@@ -696,7 +699,10 @@ int main(int argc, char **argv)
             }
 
             /*** iterated state estimation ***/
+            //* Nearest_Points存储一帧点云所有点的最近邻点
             Nearest_Points.resize(feats_down_size); //存储近邻点的vector
+
+            //* 迭代更新函数
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, feats_down_body, ikdtree, Nearest_Points, NUM_MAX_ITERATIONS, extrinsic_est_en);
 
             state_point = kf.get_x();
