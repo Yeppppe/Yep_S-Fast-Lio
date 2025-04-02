@@ -326,6 +326,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
     double yaw_end = yaw_first; 
     //* 获取第一个点所在的扫描线    这个ring是一开始就有的吗？
     int layer_first = pl_orig.points[0].ring;
+    //* 这样找是不是最慢的找法？
     for (uint i = plsize - 1; i > 0; i--)
     {
       //* 从最后一个点往前查找，知道找到第一条扫描线的最后一个点
@@ -367,6 +368,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
       //* 开始计算每个点的时间戳
       if (!given_offset_time)
       {
+        //* 注意atan2于atan不同，它能够计算的角度范围为(-180,180] ,且能够根据x和y的符号判断象限
         double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
         //* 将每层第一个点的时间戳记为0 
         if (is_first[layer])
@@ -380,7 +382,6 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
           time_last[layer] = added_pt.curvature;
           continue;
         }
-        //? 计算的是补角?
         if (yaw_angle <= yaw_fp[layer])
         {
           //* omega_l是雷达旋转的角速度 单位是度/ms意思是 转换过来就是1秒钟转3610度，也就是每秒10圈
@@ -394,6 +395,9 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
         //* 当前角度的时间戳小于上一次的时间，可能是跨越了象限 把角度从[-180-180]，需要补上360度的增量的时间
         //? 所以雷达扫描的时候 是一圈一圈扫16圈算一帧 还是一圈就能扫完16线 成为一帧？
         //* 答 16线表示包含16个激光扫描器，共同形成一帧  这个应该是怕角度为负数，对应扫描时间也是负的了
+
+        //! 这行代码执行的时候，当前扫描时间小于上一次扫描时间，那是进入新的一圈的时候吗，那时间直接增加0.1s？
+        //* 答：肯定不是，到下一次的时候layer都变了，每一层的第一个点永远是0，这个可能是为了保险起见？ 或者某一层的最后一个雷达扫描点超过了起始点？
         if (added_pt.curvature < time_last[layer])
           added_pt.curvature += 360.0 / omega_l;
 

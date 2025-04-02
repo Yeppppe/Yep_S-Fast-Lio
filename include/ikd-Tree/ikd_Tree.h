@@ -53,32 +53,33 @@ class KD_TREE
     
     // using MANUAL_Q_ = MANUAL_Q<typename PointType>;
 public:
-    using PointVector = std::vector<PointType, Eigen::aligned_allocator<PointType>>;
+    using PointVector = std::vector<PointType, Eigen::aligned_allocator<PointType>>;  //* 本质上就是一个vector<PointType>，Eigen::aligned_allocator<PointType>是为了要求内存对齐符合Eigen的PoingType类型
     using Ptr = std::shared_ptr<KD_TREE<PointType>>;
     
+    //* 对于基础类型最好在构建时给予初始值。
     struct KD_TREE_NODE
     {
         PointType point;
-        int division_axis;
-        int TreeSize = 1;
-        int invalid_point_num = 0;
-        int down_del_num = 0;
-        bool point_deleted = false;
-        bool tree_deleted = false;
-        bool point_downsample_deleted = false;
-        bool tree_downsample_deleted = false;
-        bool need_push_down_to_left = false;
-        bool need_push_down_to_right = false;
-        bool working_flag = false;
-        pthread_mutex_t push_down_mutex_lock;
-        float node_range_x[2], node_range_y[2], node_range_z[2];
-        float radius_sq;
-        KD_TREE_NODE *left_son_ptr = nullptr;
-        KD_TREE_NODE *right_son_ptr = nullptr;
-        KD_TREE_NODE *father_ptr = nullptr;
+        int division_axis;      //* 分割轴
+        int TreeSize = 1;       //* 以当前节点为根节点的树的节点树（初始只有自己所以默认为1）
+        int invalid_point_num = 0;       //* 记录当前节点的子树中标记为删除节点的数量
+        int down_del_num = 0;            //* 降采样删除点的数量
+        bool point_deleted = false;      //* 点删除标记，如果标记为True，则节点的点数据逻辑上认为不存在
+        bool tree_deleted = false;       //* 树删除标记，如果标记为true，则当前节点子树上的点的逻辑都认为不存在
+        bool point_downsample_deleted = false;      //* 表示当前节点的点是否因降采样而删除
+        bool tree_downsample_deleted = false;       //* 表示以当前节点为根的树是否因降采样而被删除
+        bool need_push_down_to_left = false;        //* 是否需要向左树传播状态
+        bool need_push_down_to_right = false;       //* 是否需要向右树传播状态
+        bool working_flag = false;                  //* 表示当前节点是否正在被处理，用于并发控制，防止多个线程同时操作同一节点。
+        pthread_mutex_t push_down_mutex_lock;       //* 节点推送状态的互斥锁
+        float node_range_x[2], node_range_y[2], node_range_z[2];           //* 定义节点所代表的空间范围
+        float radius_sq;            
+        KD_TREE_NODE *left_son_ptr = nullptr;        //* 左子树指针
+        KD_TREE_NODE *right_son_ptr = nullptr;       //* 右子树指针
+        KD_TREE_NODE *father_ptr = nullptr;          //* 父节点指针
         // For paper data record
-        float alpha_del;
-        float alpha_bal;
+        float alpha_del;                //* 删除因子
+        float alpha_bal;                //* 平衡因子
     };
 
     struct Operation_Logger_Type

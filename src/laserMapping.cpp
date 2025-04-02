@@ -111,7 +111,7 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     }
 
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr);   //* msg处理后---> ptr中
+    p_pre->process(msg, ptr);   //* msg处理后---> ptr中 ptr是所有提取的平面点（如果需要提取特征点的话）
     lidar_buffer.push_back(ptr);
     time_buffer.push_back(msg->header.stamp.toSec());
     last_timestamp_lidar = msg->header.stamp.toSec();
@@ -282,11 +282,13 @@ BoxPointType LocalMap_Points;      // ikd-tree地图立方体的2个角点
 bool Localmap_Initialized = false; // 局部地图是否初始化
 void lasermap_fov_segment()
 {
+    //* cub_needrm表示需要移除的边界
     cub_needrm.clear(); // 清空需要移除的区域
     kdtree_delete_counter = 0;
 
     V3D pos_LiD = pos_lid; // W系下位置
-    //初始化局部地图范围，以pos_LiD为中心,长宽高均为cube_len
+    //初始化局部地图范围，以pos_LiD为中心,长宽高均为cube_len 
+    //* 地图大小为200*200*200  且地图的中心点是第一次需要建图时候当时的雷达在世界坐标系的点? 这个真的是200吗
     if (!Localmap_Initialized)
     {
         for (int i = 0; i < 3; i++)
@@ -295,12 +297,13 @@ void lasermap_fov_segment()
             LocalMap_Points.vertex_max[i] = pos_LiD(i) + cube_len / 2.0;
         }
         Localmap_Initialized = true;
-        return;
+        return;    //* 第一次初始化后直接return
     }
 
-    //各个方向上pos_LiD与局部地图边界的距离
+    //*各个方向上pos_LiD与局部地图边界的距离
     float dist_to_map_edge[3][2];
     bool need_move = false;
+    //! 这个距离很奇怪，按照这个算 岂不是永远都需要移动？ cube_len确定是200？
     for (int i = 0; i < 3; i++)
     {
         dist_to_map_edge[i][0] = fabs(pos_LiD(i) - LocalMap_Points.vertex_min[i]);
@@ -308,13 +311,14 @@ void lasermap_fov_segment()
         // 与某个方向上的边界距离（1.5*300m）太小，标记需要移除need_move(FAST-LIO2论文Fig.3)
         if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE || dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE)
             need_move = true;
-    }
+    }  
     if (!need_move)
         return; //如果不需要，直接返回，不更改局部地图
 
     BoxPointType New_LocalMap_Points, tmp_boxpoints;
     New_LocalMap_Points = LocalMap_Points;
     //需要移动的距离
+    //* 是一个经验公式 还是那个问题 cube_len 比 DET_RANGE还小？
     float mov_dist = max((cube_len - 2.0 * MOV_THRESHOLD * DET_RANGE) * 0.5 * 0.9, double(DET_RANGE * (MOV_THRESHOLD - 1)));
     for (int i = 0; i < 3; i++)
     {
@@ -323,7 +327,9 @@ void lasermap_fov_segment()
         {
             New_LocalMap_Points.vertex_max[i] -= mov_dist;
             New_LocalMap_Points.vertex_min[i] -= mov_dist;
+            //* tmp_boxpoints.vertex_min[i] 代表要移除的点的一个边界（因为这种情况是雷达向小方向移动，因此tmp_boxpoints.vertex_max还是之前的最大值不变，只计算小值部分即可）
             tmp_boxpoints.vertex_min[i] = LocalMap_Points.vertex_max[i] - mov_dist;
+            //* 会push_back三次，每次都会有重叠区域
             cub_needrm.push_back(tmp_boxpoints);
         }
         else if (dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE)
@@ -337,9 +343,11 @@ void lasermap_fov_segment()
     LocalMap_Points = New_LocalMap_Points;
 
     PointVector points_history;
+    //* 用来获取已被删除的点 存入points_history中 ，已被删除的点分别存放在Points_deleted和Multithread_Points_deleted中
     ikdtree.acquire_removed_points(points_history);
 
     if (cub_needrm.size() > 0)
+        //* 范围点删除
         kdtree_delete_counter = ikdtree.Delete_Point_Boxes(cub_needrm); //删除指定范围内的点
 }
 
@@ -355,32 +363,40 @@ void RGBpointBodyLidarToIMU(PointType const *const pi, PointType *const po)
 }
 
 //根据最新估计位姿  增量添加点云到map
+//* 增量式构建和更新点云地图
 void map_incremental()
-{
-    PointVector PointToAdd;
-    PointVector PointNoNeedDownsample;
+{ 
+    PointVector PointToAdd;         //* 存储需要添加到地图中并进行降采样的点
+    PointVector PointNoNeedDownsample;          //* 存储需要添加到地图中但不需要降采样的点
     PointToAdd.reserve(feats_down_size);
     PointNoNeedDownsample.reserve(feats_down_size);
     for (int i = 0; i < feats_down_size; i++)
     {
         //转换到世界坐标系
         pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
-
+        //* Nearest_Points 好像是一个vector套vector 因为PointVector也是一个vector
+        //* flg_EKF_inited除了初始化那一帧 ，剩下应该都是true
         if (!Nearest_Points[i].empty() && flg_EKF_inited)
         {
             const PointVector &points_near = Nearest_Points[i];
             bool need_add = true;
             BoxPointType Box_of_Point;
             PointType mid_point; //点所在体素的中心
+            //* filter_size_map_min = 0.5
             mid_point.x = floor(feats_down_world->points[i].x / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
             mid_point.y = floor(feats_down_world->points[i].y / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
             mid_point.z = floor(feats_down_world->points[i].z / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
+            //* calc_dist 计算入参两点的距离 
             float dist = calc_dist(feats_down_world->points[i], mid_point);
+            
+            //* 最邻近点与当前点不在同意提速  该点单成一个体素 不需下采样
             if (fabs(points_near[0].x - mid_point.x) > 0.5 * filter_size_map_min && fabs(points_near[0].y - mid_point.y) > 0.5 * filter_size_map_min && fabs(points_near[0].z - mid_point.z) > 0.5 * filter_size_map_min)
             {
                 PointNoNeedDownsample.push_back(feats_down_world->points[i]); //如果距离最近的点都在体素外，则该点不需要Downsample
                 continue;
             }
+
+            //* NUM_MATCH_POINTS = 5
             for (int j = 0; j < NUM_MATCH_POINTS; j++)
             {
                 if (points_near.size() < NUM_MATCH_POINTS)
@@ -391,9 +407,11 @@ void map_incremental()
                     break;
                 }
             }
+            //* 只添加最近的距离的点
             if (need_add)
                 PointToAdd.push_back(feats_down_world->points[i]);
         }
+        //* 对于第一帧
         else
         {
             PointToAdd.push_back(feats_down_world->points[i]);
@@ -402,6 +420,8 @@ void map_incremental()
 
     double st_time = omp_get_wtime();
     add_point_size = ikdtree.Add_Points(PointToAdd, true);
+    
+    // * 下次从这个函数开始看
     ikdtree.Add_Points(PointNoNeedDownsample, false);
     add_point_size = PointToAdd.size() + PointNoNeedDownsample.size();
 }
@@ -510,7 +530,7 @@ void set_posestamp(T &out)
 void publish_odometry(const ros::Publisher &pubOdomAftMapped)
 {
     odomAftMapped.header.frame_id = "camera_init";
-    odomAftMapped.child_frame_id = "body";
+    odomAftMapped.child_frame_id = "body"; 
     odomAftMapped.header.stamp = ros::Time().fromSec(lidar_end_time);
     set_posestamp(odomAftMapped.pose);
     pubOdomAftMapped.publish(odomAftMapped);
@@ -612,8 +632,8 @@ int main(int argc, char **argv)
     ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
     ros::Publisher pubPath = nh.advertise<nav_msgs::Path>("/path", 100000);
 
-    downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
-    downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);
+    downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);    //* yaml文件初始化配置/默认值为0.5
+    downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);        
 
     shared_ptr<ImuProcess> p_imu1(new ImuProcess());
     //* IMU ---> Lidar的外参
@@ -661,6 +681,7 @@ int main(int argc, char **argv)
 
             flg_EKF_inited = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? false : true;
 
+            //* 更新地图边界函数
             lasermap_fov_segment(); //更新localmap边界，然后降采样当前帧点云
 
             //点云下采样
@@ -676,14 +697,17 @@ int main(int argc, char **argv)
             } 
 
             //初始化ikdtree(ikdtree为空时)
+            //* 最开始地图为空的时候，创建一个ikdtree，正常调用ikdtree命令
             if (ikdtree.Root_Node == nullptr)
             {
+                //* 设置降采样尺寸为 0.5
                 ikdtree.set_downsample_param(filter_size_map_min);
                 feats_down_world->resize(feats_down_size);
                 for (int i = 0; i < feats_down_size; i++)
                 {
                     pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i])); // lidar坐标系转到世界坐标系
                 }
+                //* Build创建一个ikdtree
                 ikdtree.Build(feats_down_world->points); //根据世界坐标系下的点构建ikdtree
                 continue;
             }
@@ -692,17 +716,18 @@ int main(int argc, char **argv)
             if (0) // If you need to see map point, change to "if(1)"
             {
                 PointVector().swap(ikdtree.PCL_Storage);
+                //* 记录有效点
                 ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
                 featsFromMap->clear();
                 featsFromMap->points = ikdtree.PCL_Storage;
                 // std::cout << "ikdtree size: " << featsFromMap->points.size() << std::endl;
             }
-
             /*** iterated state estimation ***/
             //* Nearest_Points存储一帧点云所有点的最近邻点
             Nearest_Points.resize(feats_down_size); //存储近邻点的vector
 
             //* 迭代更新函数
+            //* 这里传播进去的R竟然是固定值！  但反过来一想 确实，观测的协方差矩阵，每次观测每个点之间并没有什么相关性，因此始终认为协方差为固定值也没什么问题
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, feats_down_body, ikdtree, Nearest_Points, NUM_MAX_ITERATIONS, extrinsic_est_en);
 
             state_point = kf.get_x();
@@ -713,6 +738,8 @@ int main(int argc, char **argv)
 
             /*** add the feature points to map kdtree ***/
             feats_down_world->resize(feats_down_size);
+
+            //* 地图增量更新函数
             map_incremental();
 
             /******* Publish points *******/

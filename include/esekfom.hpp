@@ -139,6 +139,7 @@ namespace esekfom
 				Matrix<float, 4, 1> pabcd;		//平面点信息 
 				point_selected_surf[i] = false; //将该点设置为无效点，用来判断是否满足条件
 				//拟合平面方程ax+by+cz+d=0并求解点到平面距离
+				//* pabcd前三个量是归一化后的法向量 最后一个是1/D
 				if (esti_plane(pabcd, points_near, 0.1f))
 				{
 					//* pd2计算的是当前点到拟合平面的距离
@@ -170,7 +171,7 @@ namespace esekfom
 				}
 			}
 
-			//* 点特征数比较少的话，valid就会编程false
+			//* 点特征数比较少的话，valid就会变成false
 			if (effct_feat_num < 1)
 			{
 				ekfom_data.valid = false;
@@ -197,6 +198,7 @@ namespace esekfom
 
 				// 计算雅可比矩阵H
 				V3D C(x_.rot.matrix().transpose() * norm_vec);  //* C =  R逆 * 法向量
+				//! 总感觉跟公式是反过来的?
 				V3D A(point_I_crossmat * C);
 				if (extrinsic_est)
 				{
@@ -271,7 +273,7 @@ namespace esekfom
 				dx_new = boxminus(x_, x_propagated); //公式(18)中的 x^k - x^
 
 				//由于H矩阵是稀疏的，只有前12列有非零元素，后12列是零 因此这里采用分块矩阵的形式计算 减少计算量
-				auto H = dyn_share.h_x;												// m X 12 的矩阵
+				auto H = dyn_share.h_x;												// m X 12 的矩阵 
 				Eigen::Matrix<double, 24, 24> HTH = Matrix<double, 24, 24>::Zero(); //矩阵 H^T * H
 				//* 为论文中的公式(20)做准备，由于公式中的R的对角元素值都相同，因此可以看作一个常数
 				HTH.block<12, 12>(0, 0) = H.transpose() * H;
@@ -282,7 +284,7 @@ namespace esekfom
 
 				Eigen::Matrix<double, 24, 24> KH = Matrix<double, 24, 24>::Zero(); //矩阵 K * H
 				//? KH 后面迭代更新会用到
-				KH.block<24, 12>(0, 0) = K * H;
+				KH.block<24, 12>(0, 0) = K * H;  
 				Matrix<double, 24, 1> dx_ = K * dyn_share.h + (KH - Matrix<double, 24, 24>::Identity()) * dx_new; //公式(18) J矩阵接近单位阵 因此就忽略掉了
 				// std::cout << "dx_: " << dx_.transpose() << std::endl;
 				x_ = boxplus(x_, dx_); //公式(18)

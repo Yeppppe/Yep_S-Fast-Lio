@@ -408,6 +408,7 @@ void KD_TREE<PointType>::run_operation(KD_TREE_NODE **root, Operation_Logger_Typ
 template <typename PointType>
 void KD_TREE<PointType>::Build(PointVector point_cloud)
 {
+    //* 先从根节点开始将整棵树删除
     if (Root_Node != nullptr)
     {
         delete_tree_nodes(&Root_Node);
@@ -418,6 +419,7 @@ void KD_TREE<PointType>::Build(PointVector point_cloud)
     InitTreeNode(STATIC_ROOT_NODE);
     BuildTree(&STATIC_ROOT_NODE->left_son_ptr, 0, point_cloud.size() - 1, point_cloud);
     Update(STATIC_ROOT_NODE);
+    //* STATIC表示作为一个哨兵节点 ，它的左子节点才是整个树的根节点
     STATIC_ROOT_NODE->TreeSize = 0;
     Root_Node = STATIC_ROOT_NODE->left_son_ptr;
 }
@@ -628,6 +630,7 @@ void KD_TREE<PointType>::Delete_Points(PointVector &PointToDel)
     return;
 }
 
+//* 用于删除指定范围内的点
 template <typename PointType>
 int KD_TREE<PointType>::Delete_Point_Boxes(vector<BoxPointType> &BoxPoints)
 {
@@ -657,6 +660,7 @@ int KD_TREE<PointType>::Delete_Point_Boxes(vector<BoxPointType> &BoxPoints)
     return tmp_counter;
 }
 
+//* KD树实现，用于获取已被删除的点
 template <typename PointType>
 void KD_TREE<PointType>::acquire_removed_points(PointVector &removed_points)
 {
@@ -675,6 +679,9 @@ void KD_TREE<PointType>::acquire_removed_points(PointVector &removed_points)
     return;
 }
 
+//* l : 点云数组的起始索引
+//* r : 点云数组的结束索引
+//* Storage: 待处理点
 template <typename PointType>
 void KD_TREE<PointType>::BuildTree(KD_TREE_NODE **root, int l, int r, PointVector &Storage)
 {
@@ -689,6 +696,7 @@ void KD_TREE<PointType>::BuildTree(KD_TREE_NODE **root, int l, int r, PointVecto
     float min_value[3] = {INFINITY, INFINITY, INFINITY};
     float max_value[3] = {-INFINITY, -INFINITY, -INFINITY};
     float dim_range[3] = {0, 0, 0};
+    //* 找到每个维度的最小值和最大值
     for (i = l; i <= r; i++)
     {
         min_value[0] = min(min_value[0], Storage[i].x);
@@ -699,6 +707,7 @@ void KD_TREE<PointType>::BuildTree(KD_TREE_NODE **root, int l, int r, PointVecto
         max_value[2] = max(max_value[2], Storage[i].z);
     }
     // Select the longest dimension as division axis
+    //* 选择最长的维度作为最大值（并不是计算点的分布，可能因为雷达的发射频率都差不多？ 感觉合理）
     for (i = 0; i < 3; i++)
         dim_range[i] = max_value[i] - min_value[i];
     for (i = 1; i < 3; i++)
@@ -706,10 +715,12 @@ void KD_TREE<PointType>::BuildTree(KD_TREE_NODE **root, int l, int r, PointVecto
             div_axis = i;
     // Divide by the division axis and recursively build.
 
+    //* 设置分割轴并排序
     (*root)->division_axis = div_axis;
     switch (div_axis)
     {
     case 0:
+        //* 按照point_cmp_x规则 对Storage的点进行排序
         nth_element(begin(Storage) + l, begin(Storage) + mid, begin(Storage) + r + 1, point_cmp_x);
         break;
     case 1:
@@ -763,28 +774,36 @@ void KD_TREE<PointType>::Rebuild(KD_TREE_NODE **root)
     return;
 }
 
+//* 删除指定空间范围内的所有点
+//* 但是有点没理解传入双重指针的概念
 template <typename PointType>
 int KD_TREE<PointType>::Delete_by_range(KD_TREE_NODE **root, BoxPointType boxpoint, bool allow_rebuild, bool is_downsample)
 {
+    //* 如果节点为空或已被标记为删除，则直接返回0
     if ((*root) == nullptr || (*root)->tree_deleted)
         return 0;
     (*root)->working_flag = true;
+    //* Delete_by_range本来就是递归的，因此Push_Down也会被多次调用
     Push_Down(*root);
     int tmp_counter = 0;
+    //* 检测是否有重叠区域
+    //* node_range_x[2]存储的应该分别是该节点范围内x的最小值和最大值 y，z同理
     if (boxpoint.vertex_max[0] <= (*root)->node_range_x[0] || boxpoint.vertex_min[0] > (*root)->node_range_x[1])
         return 0;
     if (boxpoint.vertex_max[1] <= (*root)->node_range_y[0] || boxpoint.vertex_min[1] > (*root)->node_range_y[1])
         return 0;
     if (boxpoint.vertex_max[2] <= (*root)->node_range_z[0] || boxpoint.vertex_min[2] > (*root)->node_range_z[1])
         return 0;
+    
+    //* 整树删除
     if (boxpoint.vertex_min[0] <= (*root)->node_range_x[0] && boxpoint.vertex_max[0] > (*root)->node_range_x[1] && boxpoint.vertex_min[1] <= (*root)->node_range_y[0] && boxpoint.vertex_max[1] > (*root)->node_range_y[1] && boxpoint.vertex_min[2] <= (*root)->node_range_z[0] && boxpoint.vertex_max[2] > (*root)->node_range_z[1])
     {
         (*root)->tree_deleted = true;
         (*root)->point_deleted = true;
         (*root)->need_push_down_to_left = true;
         (*root)->need_push_down_to_right = true;
-        tmp_counter = (*root)->TreeSize - (*root)->invalid_point_num;
-        (*root)->invalid_point_num = (*root)->TreeSize;
+        tmp_counter = (*root)->TreeSize - (*root)->invalid_point_num;   //* 要删除的有效点 = 这个节点数下所有的点 - 这棵节点树上的无效点
+        (*root)->invalid_point_num = (*root)->TreeSize;                 //* 将这个节点下面的树都设置为无效点
         if (is_downsample)
         {
             (*root)->tree_downsample_deleted = true;
@@ -793,6 +812,8 @@ int KD_TREE<PointType>::Delete_by_range(KD_TREE_NODE **root, BoxPointType boxpoi
         }
         return tmp_counter;
     }
+
+    //* 单点删除，检查当前节点是否在要删除区域内
     if (!(*root)->point_deleted && boxpoint.vertex_min[0] <= (*root)->point.x && boxpoint.vertex_max[0] > (*root)->point.x && boxpoint.vertex_min[1] <= (*root)->point.y && boxpoint.vertex_max[1] > (*root)->point.y && boxpoint.vertex_min[2] <= (*root)->point.z && boxpoint.vertex_max[2] > (*root)->point.z)
     {
         (*root)->point_deleted = true;
@@ -807,6 +828,9 @@ int KD_TREE<PointType>::Delete_by_range(KD_TREE_NODE **root, BoxPointType boxpoi
     else
         delete_box_log.op = DELETE_BOX;
     delete_box_log.boxpoint = boxpoint;
+
+    //* 递归处理左子树  
+    //! 这个Rebuild是什么意思
     if ((Rebuild_Ptr == nullptr) || (*root)->left_son_ptr != *Rebuild_Ptr)
     {
         tmp_counter += Delete_by_range(&((*root)->left_son_ptr), boxpoint, allow_rebuild, is_downsample);
@@ -823,6 +847,8 @@ int KD_TREE<PointType>::Delete_by_range(KD_TREE_NODE **root, BoxPointType boxpoi
         }
         pthread_mutex_unlock(&working_flag_mutex);
     }
+
+    //* 递归处理右子树
     if ((Rebuild_Ptr == nullptr) || (*root)->right_son_ptr != *Rebuild_Ptr)
     {
         tmp_counter += Delete_by_range(&((*root)->right_son_ptr), boxpoint, allow_rebuild, is_downsample);
@@ -1356,31 +1382,45 @@ bool KD_TREE<PointType>::Criterion_Check(KD_TREE_NODE *root)
     return false;
 }
 
+
+//* 传播状态，但是只向下传播了一层
 template <typename PointType>
 void KD_TREE<PointType>::Push_Down(KD_TREE_NODE *root)
 {
     if (root == nullptr)
         return;
+    //* Operation_Logger_Type是一个操作对象结构体
     Operation_Logger_Type operation;
     operation.op = PUSH_DOWN;
     operation.tree_deleted = root->tree_deleted;
     operation.tree_downsample_deleted = root->tree_downsample_deleted;
+    //* 左子树进行操作
     if (root->need_push_down_to_left && root->left_son_ptr != nullptr)
     {
+        //* 当前节点不是重建节点
+        //! *Rebuild_Ptr != root->left_son_ptr是什么意思
         if (Rebuild_Ptr == nullptr || *Rebuild_Ptr != root->left_son_ptr)
         {
+            //* 传播树降采样和点降采样标记
             root->left_son_ptr->tree_downsample_deleted |= root->tree_downsample_deleted;
             root->left_son_ptr->point_downsample_deleted |= root->tree_downsample_deleted;
+            //* 传播树删除和点删除标记
             root->left_son_ptr->tree_deleted = root->tree_deleted || root->left_son_ptr->tree_downsample_deleted;
             root->left_son_ptr->point_deleted = root->left_son_ptr->tree_deleted || root->left_son_ptr->point_downsample_deleted;
+            
+            //* 更新计数器
             if (root->tree_downsample_deleted)
                 root->left_son_ptr->down_del_num = root->left_son_ptr->TreeSize;
             if (root->tree_deleted)
                 root->left_son_ptr->invalid_point_num = root->left_son_ptr->TreeSize;
             else
                 root->left_son_ptr->invalid_point_num = root->left_son_ptr->down_del_num;
+
+            //* 设置子节点推送标记
             root->left_son_ptr->need_push_down_to_left = true;
             root->left_son_ptr->need_push_down_to_right = true;
+
+            //* 重置当前节点做左推送标记
             root->need_push_down_to_left = false;
         }
         else
@@ -1398,6 +1438,7 @@ void KD_TREE<PointType>::Push_Down(KD_TREE_NODE *root)
                 root->left_son_ptr->invalid_point_num = root->left_son_ptr->down_del_num;
             root->left_son_ptr->need_push_down_to_left = true;
             root->left_son_ptr->need_push_down_to_right = true;
+            //* 下面是在做什么 单纯添加日志？
             if (rebuild_flag)
             {
                 pthread_mutex_lock(&rebuild_logger_mutex_lock);
@@ -1454,6 +1495,13 @@ void KD_TREE<PointType>::Push_Down(KD_TREE_NODE *root)
     return;
 }
 
+//* 按照树的四种情况对树进行更新
+/*
+    1. 左右子树都用
+    2. 只有左子树
+    3。只有右子树
+    3. 没有子节点
+*/
 template <typename PointType>
 void KD_TREE<PointType>::Update(KD_TREE_NODE *root)
 {
@@ -1463,13 +1511,18 @@ void KD_TREE<PointType>::Update(KD_TREE_NODE *root)
     float tmp_range_y[2] = {INFINITY, -INFINITY};
     float tmp_range_z[2] = {INFINITY, -INFINITY};
     // Update Tree Size
+    //* 左右子树都有
     if (left_son_ptr != nullptr && right_son_ptr != nullptr)
     {
+        //* 更新树的统计信息，看前面几行估计也是个递归了 ，擦 竟然不是递推 单纯更新root的属性
         root->TreeSize = left_son_ptr->TreeSize + right_son_ptr->TreeSize + 1;
         root->invalid_point_num = left_son_ptr->invalid_point_num + right_son_ptr->invalid_point_num + (root->point_deleted ? 1 : 0);
         root->down_del_num = left_son_ptr->down_del_num + right_son_ptr->down_del_num + (root->point_downsample_deleted ? 1 : 0);
+        //* 树删除都是相与逻辑 因为都是bool变量 所以&和&&没有区别，一定要当前节点以及左右两棵树都认为该删除 才能认为当前树时删除的。
         root->tree_downsample_deleted = left_son_ptr->tree_downsample_deleted & right_son_ptr->tree_downsample_deleted & root->point_downsample_deleted;
         root->tree_deleted = left_son_ptr->tree_deleted && right_son_ptr->tree_deleted && root->point_deleted;
+
+        //* 如果整个树被删除了或者所有节点都有效
         if (root->tree_deleted || (!left_son_ptr->tree_deleted && !right_son_ptr->tree_deleted && !root->point_deleted))
         {
             tmp_range_x[0] = min(min(left_son_ptr->node_range_x[0], right_son_ptr->node_range_x[0]), root->point.x);
@@ -1479,7 +1532,7 @@ void KD_TREE<PointType>::Update(KD_TREE_NODE *root)
             tmp_range_z[0] = min(min(left_son_ptr->node_range_z[0], right_son_ptr->node_range_z[0]), root->point.z);
             tmp_range_z[1] = max(max(left_son_ptr->node_range_z[1], right_son_ptr->node_range_z[1]), root->point.z);
         }
-        else
+        else //* 否则只考虑违背删除的子树
         {
             if (!left_son_ptr->tree_deleted)
             {
@@ -1510,6 +1563,7 @@ void KD_TREE<PointType>::Update(KD_TREE_NODE *root)
             }
         }
     }
+    //* 右树为空，左树不为空
     else if (left_son_ptr != nullptr)
     {
         root->TreeSize = left_son_ptr->TreeSize + 1;
@@ -1548,6 +1602,7 @@ void KD_TREE<PointType>::Update(KD_TREE_NODE *root)
             }
         }
     }
+    //* 右树不为空，左树为空
     else if (right_son_ptr != nullptr)
     {
         root->TreeSize = right_son_ptr->TreeSize + 1;
@@ -1600,12 +1655,15 @@ void KD_TREE<PointType>::Update(KD_TREE_NODE *root)
         tmp_range_z[0] = root->point.z;
         tmp_range_z[1] = root->point.z;
     }
+
+    //* 将更新好的临时范围放入节点的node_range_xxx属性中
     memcpy(root->node_range_x, tmp_range_x, sizeof(tmp_range_x));
     memcpy(root->node_range_y, tmp_range_y, sizeof(tmp_range_y));
     memcpy(root->node_range_z, tmp_range_z, sizeof(tmp_range_z));
     float x_L = (root->node_range_x[1] - root->node_range_x[0]) * 0.5;
     float y_L = (root->node_range_y[1] - root->node_range_y[0]) * 0.5;
     float z_L = (root->node_range_z[1] - root->node_range_z[0]) * 0.5;
+    //* 更新此节点的遍布范围半径，虽然计算出来了，但中心点不一定是当前root对应的点。
     root->radius_sq = x_L*x_L + y_L * y_L + z_L * z_L;
     if (left_son_ptr != nullptr)
         left_son_ptr->father_ptr = root;
@@ -1617,12 +1675,18 @@ void KD_TREE<PointType>::Update(KD_TREE_NODE *root)
         if (son_ptr == nullptr)
             son_ptr = root->right_son_ptr;
         float tmp_bal = float(son_ptr->TreeSize) / (root->TreeSize - 1);
-        root->alpha_del = float(root->invalid_point_num) / root->TreeSize;
-        root->alpha_bal = (tmp_bal >= 0.5 - EPSS) ? tmp_bal : 1 - tmp_bal;
+        root->alpha_del = float(root->invalid_point_num) / root->TreeSize;  //* 计算无效点占总点数的比例
+        root->alpha_bal = (tmp_bal >= 0.5 - EPSS) ? tmp_bal : 1 - tmp_bal;   //* 计算平衡因子，始终不小于0.5
     }
     return;
 }
 
+//* 用于将树中的有效点收集到一个线性向量中，同时可以选择记录被删除的点。
+/*
+    root:要展平的根节点
+    Storage：存储有效点的向量引用
+    storage_type： 存储要删除的点
+*/
 template <typename PointType>
 void KD_TREE<PointType>::flatten(KD_TREE_NODE *root, PointVector &Storage, delete_point_storage_set storage_type)
 {
@@ -1633,30 +1697,36 @@ void KD_TREE<PointType>::flatten(KD_TREE_NODE *root, PointVector &Storage, delet
     {
         Storage.push_back(root->point);
     }
+    //* 递归处理左右子树
     flatten(root->left_son_ptr, Storage, storage_type);
     flatten(root->right_son_ptr, Storage, storage_type);
     switch (storage_type)
     {
+    //* 不记录删除的点
     case NOT_RECORD:
         break;
+    //* 点被删除但不是因为降采样而删除 则存入Points_deleted
     case DELETE_POINTS_REC:
         if (root->point_deleted && !root->point_downsample_deleted)
         {
             Points_deleted.push_back(root->point);
         }
         break;
+    //* 点被删除但不是因为降采样而删除 则存入Points_deleted
     case MULTI_THREAD_REC:
-        if (root->point_deleted && !root->point_downsample_deleted)
+        if (root->point_deleted && !root->Multithread_Points_deleted)
         {
             Multithread_Points_deleted.push_back(root->point);
         }
         break;
+    //* 默认值为忽略
     default:
         break;
     }
     return;
 }
 
+//* 递归删除当前节点下的所有子节点（包括当前节点）
 template <typename PointType>
 void KD_TREE<PointType>::delete_tree_nodes(KD_TREE_NODE **root)
 {

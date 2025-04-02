@@ -75,6 +75,7 @@ class ImuProcess
   bool imu_need_init_ = true;             //是否需要初始化imu
 };
 
+//* 这个先初始化再赋值的写法不太好，但是此时还未正式开始运行代码，所以基本不太会影响性能，而且只运行这一次。所以感觉也没什么关系了
 ImuProcess::ImuProcess()
     : b_first_frame_(true), imu_need_init_(true), start_timestamp_(-1)
 {
@@ -132,7 +133,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf &kf_state, in
   if (b_first_frame_) //如果为第一帧IMU
   {
     Reset();    //重置IMU参数
-    N = 1;      //将迭代次数置1
+    N = 1;      //将迭代次数置1 (好像是为了后面求这段时间数据的平均值来把N从1开始计算)
     b_first_frame_ = false;  
      const auto &imu_acc = meas.imu.front()->linear_acceleration;    //IMU初始时刻的加速度    //? 初始加速度会不会就是重力加速度  Reset()中重置加速度为(0,0,-1)
     const auto &gyr_acc = meas.imu.front()->angular_velocity;       //IMU初始时刻的角速度
@@ -198,6 +199,7 @@ void ImuProcess:: UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_stat
 
 
   //? 这里为什么不可能是前面前向传播出来的估计值？
+  //* 答：对于第一次初始化的时候 得到的确实是前面直接估计到的值，但是对于初始化过后，去畸变函数结束后 main函数的while循环还要继续进行，会进行后验估计，因此下一次再进入到这个函数中的时候，得到的就是后验估计后的状态值
   state_ikfom imu_state = kf_state.get_x();  // 获取上一次KF估计的后验状态作为本次IMU预测的初始状态
   //* vector<Pose6D> IMUpose; 
   IMUpose.clear();
@@ -228,6 +230,7 @@ void ImuProcess:: UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_stat
                 0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
 
     //? 是怕重力分量的模长不为9.81？
+    //! 如果真是这样的话 那是不是求反了？
     acc_avr  = acc_avr * G_m_s2 / mean_acc.norm(); //通过重力数值对加速度进行调整(除上初始化的IMU大小*9.8)
 
     //如果IMU开始时刻早于上次雷达最晚时刻(因为将上次最后一个IMU插入到此次开头了，所以会出现一次这种情况)
@@ -301,7 +304,7 @@ void ImuProcess:: UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_stat
     //*                                        * i * * * * i * * * * |
     for(; it_pcl->curvature / double(1000) > head->offset_time; it_pcl --)
     {
-      dt = it_pcl->curvature / double(1000) - head->offset_time;    //点到IMU开始时刻的时间间隔 
+      dt = it_pcl->curvature / double(1000) - head->offset_time;    //* 点到IMU head时刻的时间间隔 
 
       /*    P_compensate = R_imu_e ^ T * (R_i * P_i + T_ei)    */
 
@@ -312,6 +315,7 @@ void ImuProcess:: UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_stat
       //?  有个问题 就是这个点不是本来就在lidar坐标系下的嘛
       //! offset_R_L_I 代表的应该是从Lidar  -- > IMU坐标系的意思 和我们平时公式的定义不同
       //todo 关于坐标系变换，不同极坐标系下的坐标变换 要好好搞一下
+      //* 下面这个公式还是没有特别搞懂 感觉怪怪的
       V3D P_compensate = imu_state.offset_R_L_I.matrix().transpose() * (imu_state.rot.matrix().transpose() * (R_i * (imu_state.offset_R_L_I.matrix() * P_i + imu_state.offset_T_L_I) + T_ei) - imu_state.offset_T_L_I);
 
       it_pcl->x = P_compensate(0);
@@ -355,7 +359,7 @@ void ImuProcess::Process(const MeasureGroup &meas, esekfom::esekf &kf_state, Poi
 
       cov_acc = cov_acc_scale;         //? woc 下面直接赋值了，上面那个有什么用
       cov_gyr = cov_gyr_scale;         //* 角速度协方差
-      ROS_INFO("IMU Initial Done");
+      ROS_INFO("IMU Initial Done");    
     }
 
     return;
