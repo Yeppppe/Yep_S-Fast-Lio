@@ -476,33 +476,42 @@ void KD_TREE<PointType>::Radius_Search(PointType point, const float radius, Poin
     Search_by_radius(Root_Node, point, radius, Storage);
 }
 
+//* 用于向树中添加多个点
 template <typename PointType>
 int KD_TREE<PointType>::Add_Points(PointVector &PointToAdd, bool downsample_on)
 {
+    //* 要添加的点
     int NewPointSize = PointToAdd.size();
-    int tree_size = size();
-    BoxPointType Box_of_Point;
-    PointType downsample_result, mid_point;
+    int tree_size = size();    //* 获取当前树的大小
+    BoxPointType Box_of_Point;     //* 定位体素的边界
+    PointType downsample_result, mid_point;    //* 存储降采样后选择的代表点
     bool downsample_switch = downsample_on && DOWNSAMPLE_SWITCH;
-    float min_dist, tmp_dist;
-    int tmp_counter = 0;
+    float min_dist, tmp_dist;    //* 比较点到体素中心的距离
+    int tmp_counter = 0;     //* 实际添加的点数
     for (int i = 0; i < PointToAdd.size(); i++)
     {
         if (downsample_switch)
         {
-            Box_of_Point.vertex_min[0] = floor(PointToAdd[i].x / downsample_size) * downsample_size;
-            Box_of_Point.vertex_max[0] = Box_of_Point.vertex_min[0] + downsample_size;
+            //* floor(PointToAdd[i].x / downsample_size)确定所在体素的索引   * downsample_size：将体素索引转换为实际坐标
+            Box_of_Point.vertex_min[0] = floor(PointToAdd[i].x / downsample_size) * downsample_size;  //* 获得当前点所在体素的左边界
+            Box_of_Point.vertex_max[0] = Box_of_Point.vertex_min[0] + downsample_size;    //* 获取右边界
             Box_of_Point.vertex_min[1] = floor(PointToAdd[i].y / downsample_size) * downsample_size;
             Box_of_Point.vertex_max[1] = Box_of_Point.vertex_min[1] + downsample_size;
             Box_of_Point.vertex_min[2] = floor(PointToAdd[i].z / downsample_size) * downsample_size;
             Box_of_Point.vertex_max[2] = Box_of_Point.vertex_min[2] + downsample_size;
+            //* 计算体素中心点
             mid_point.x = Box_of_Point.vertex_min[0] + (Box_of_Point.vertex_max[0] - Box_of_Point.vertex_min[0]) / 2.0;
             mid_point.y = Box_of_Point.vertex_min[1] + (Box_of_Point.vertex_max[1] - Box_of_Point.vertex_min[1]) / 2.0;
             mid_point.z = Box_of_Point.vertex_min[2] + (Box_of_Point.vertex_max[2] - Box_of_Point.vertex_min[2]) / 2.0;
+
+            //* 清空Downsample_Storage容器
             PointVector().swap(Downsample_Storage);
+            //* 查找当前体素内的所有点，存入Downsample_Storage
             Search_by_range(Root_Node, Box_of_Point, Downsample_Storage);
+            //* 计算当前点到体素重点的距离
             min_dist = calc_dist(PointToAdd[i], mid_point);
             downsample_result = PointToAdd[i];
+            //* 选取体素最近点作为核心代表点
             for (int index = 0; index < Downsample_Storage.size(); index++)
             {
                 tmp_dist = calc_dist(Downsample_Storage[index], mid_point);
@@ -512,17 +521,20 @@ int KD_TREE<PointType>::Add_Points(PointVector &PointToAdd, bool downsample_on)
                     downsample_result = Downsample_Storage[index];
                 }
             }
+
+            //* 非重建状态下处理
             if (Rebuild_Ptr == nullptr || *Rebuild_Ptr != Root_Node)
             {
                 if (Downsample_Storage.size() > 1 || same_point(PointToAdd[i], downsample_result))
                 {
                     if (Downsample_Storage.size() > 0)
+                    //* 非重建状态下，先删除原有点，再添加点
                         Delete_by_range(&Root_Node, Box_of_Point, true, true);
                     Add_by_point(&Root_Node, downsample_result, true, Root_Node->division_axis);
                     tmp_counter++;
                 }
             }
-            else
+            else //* 重建状态下
             {
                 if (Downsample_Storage.size() > 1 || same_point(PointToAdd[i], downsample_result))
                 {
@@ -1269,28 +1281,37 @@ void KD_TREE<PointType>::Search(KD_TREE_NODE *root, int k_nearest, PointType poi
     return;
 }
 
+//* Kd树范围搜索：
+//* 
 template <typename PointType>
 void KD_TREE<PointType>::Search_by_range(KD_TREE_NODE *root, BoxPointType boxpoint, PointVector &Storage)
 {
     if (root == nullptr)
         return;
     Push_Down(root);
+    //* 检查待搜索区域是否与节点有重叠
     if (boxpoint.vertex_max[0] <= root->node_range_x[0] || boxpoint.vertex_min[0] > root->node_range_x[1])
         return;
     if (boxpoint.vertex_max[1] <= root->node_range_y[0] || boxpoint.vertex_min[1] > root->node_range_y[1])
         return;
     if (boxpoint.vertex_max[2] <= root->node_range_z[0] || boxpoint.vertex_min[2] > root->node_range_z[1])
         return;
+    
+    //* 如果完全包含 则传出所有结点
     if (boxpoint.vertex_min[0] <= root->node_range_x[0] && boxpoint.vertex_max[0] > root->node_range_x[1] && boxpoint.vertex_min[1] <= root->node_range_y[0] && boxpoint.vertex_max[1] > root->node_range_y[1] && boxpoint.vertex_min[2] <= root->node_range_z[0] && boxpoint.vertex_max[2] > root->node_range_z[1])
     {
         flatten(root, Storage, NOT_RECORD);
         return;
     }
+
+    //* 检查节点代表的点是否在搜索范围内，如果在，则添加
     if (boxpoint.vertex_min[0] <= root->point.x && boxpoint.vertex_max[0] > root->point.x && boxpoint.vertex_min[1] <= root->point.y && boxpoint.vertex_max[1] > root->point.y && boxpoint.vertex_min[2] <= root->point.z && boxpoint.vertex_max[2] > root->point.z)
     {
         if (!root->point_deleted)
             Storage.push_back(root->point);
     }
+
+    //* 对左右节点进行递归调用
     if ((Rebuild_Ptr == nullptr) || root->left_son_ptr != *Rebuild_Ptr)
     {
         Search_by_range(root->left_son_ptr, boxpoint, Storage);
